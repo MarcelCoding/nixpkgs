@@ -216,9 +216,42 @@ let
       machine.shutdown()
     '';
   };
+  passwordFile = pkgs.writeText "postgresql-password" ''
+    super-secure-password-123
+  '';
+  mk-ensurePasswordFile-test = postgresql-name: postgresql-package: makeTest {
+    name = postgresql-name;
+    meta = with pkgs.lib.maintainers; {
+      maintainers = [ marcel ];
+    };
+
+    nodes.machine = {...}: {
+      services.postgresql = {
+        enable = true;
+        package = postgresql-package;
+        ensureUsers = [{
+          name = "testuser";
+          ensurePasswordFile = passwordFile;
+        }];
+      };
+    };
+
+    testScript = ''
+      machine.start()
+      machine.wait_for_unit("postgresql")
+
+      with subtest("Postgresql user password was sucessfully set"):
+          machine.succeed(
+              "cat ${passwordFile} | psql --username testuser --password"
+          )
+
+      machine.shutdown()
+    '';
+  };
 in
   concatMapAttrs (name: package: {
     ${name} = make-postgresql-test name package false;
     ${name + "-backup-all"} = make-postgresql-test "${name + "-backup-all"}" package true;
     ${name + "-clauses"} = mk-ensure-clauses-test name package;
+    ${name + "-password"} = mk-ensurePasswordFile-test name package;
   }) postgresql-versions
