@@ -87,7 +87,7 @@ let
       "bounce.mailboxes" = mkOption {
         type = listOf
           (submodule { freeformType = with types; listOf (attrsOf anything); });
-        default = [ ];
+        default = [ {} ];
         description = lib.mdDoc "List of bounce mailboxes";
       };
 
