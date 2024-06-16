@@ -573,8 +573,11 @@ in
               ''}
               rm -f "${cfg.dataDir}/.first_startup"
             fi
+
+            $PSQL -tAc 'ALTER DATABASE "postgres" REFRESH COLLATION VERSION'
           '' + optionalString (cfg.ensureDatabases != []) ''
             ${concatMapStrings (database: ''
+              $PSQL -tAc "SELECT 1 FROM pg_database WHERE datname = '${database}'" | grep -q 1 && $PSQL -tAc 'ALTER DATABASE "${database}" REFRESH COLLATION VERSION'
               $PSQL -tAc "SELECT 1 FROM pg_database WHERE datname = '${database}'" | grep -q 1 || $PSQL -tAc 'CREATE DATABASE "${database}"'
             '') cfg.ensureDatabases}
           '' + ''
