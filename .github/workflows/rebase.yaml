@@ -1,0 +1,43 @@
+name: rebase upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 14 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  rebase:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        target: [ "unstable", "24.05" ]
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: nixos-${{ matrix.target }}
+        fetch-depth: 1000
+        fetch-tags: false
+        show-progress: false
+
+    - name: git setup
+      run: |
+        git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+
+    - name: fetch upstream
+      run: |
+        git remote add upstream https://github.com/NixOS/nixpkgs.git
+        git fetch --no-tags --prune --no-recurse-submodules --fetch-depth 1000 upstream nixos-${{ matrix.target }}
+
+    - name: rebase
+      run: |
+        git rebase upstream/nixos-${{ matrix.target }}
+
+    - name: push
+      run: |
+        git push --force-with-lease origin nixos-${{ matrix.target }}
