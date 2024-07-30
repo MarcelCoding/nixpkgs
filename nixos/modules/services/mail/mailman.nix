@@ -259,6 +259,14 @@ in {
         '';
       };
 
+      dbPassFile = mkOption {
+        default = null;
+        type = types.nullOr types.str;
+        description = ''
+          Path to the file containing the value for `MAILMAN_REST_API_PASS`.
+        '';
+      };
+
       serve = {
         enable = mkEnableOption "automatic nginx and uwsgi setup for mailman-web";
 
@@ -519,6 +527,11 @@ in {
               ${cfg.restApiPassFile} \
               /etc/mailman.cfg
           ''}
+
+          ${pkgs.replace-secret}/bin/replace-secret \
+              '#NIXOS_MAILMAN_DB_PW#' \
+              ${cfg.dbPassFile} \
+              /etc/mailman.cfg
 
           mailmanDir=/var/lib/mailman
           mailmanWebDir=/var/lib/mailman-web
