@@ -12,14 +12,14 @@
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "redict";
-  version = "7.3.0";
+  version = "7.3.1";
 
   src = fetchFromGitea {
     domain = "codeberg.org";
     owner = "redict";
     repo = "redict";
     rev = finalAttrs.version;
-    hash = "sha256-vtDb+VqDAtrce6dpDRnPO6N9Z6dFfy8fUUqNeiZ+r5c=";
+    hash = "sha256-BwWlJgLTBjOtXuPnnioIYzO+1H8upk9j569F5yczwTg=";
   };
 
   patches = lib.optionals useSystemJemalloc [
