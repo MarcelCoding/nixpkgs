@@ -66,6 +66,8 @@ let
 
       substituteInPlace libifstate/link/base.py \
         --replace-fail "/usr/sbin/ethtool" "${lib.getExe ethtool}"
+      substituteInPlace libifstate/hook/wrapper.sh \
+        --replace-fail ' ip ' ' ${lib.getExe' iproute2 "ip"} '
     ''
     + lib.optionalString withBpf ''
       substituteInPlace libifstate/bpf/ctypes.py \

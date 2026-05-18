@@ -1,0 +1,204 @@
+#!/bin/bash
+
+# script for udhcpc and udhcpc6
+# Copyright (c) 2008 Natanael Copa <natanael.copa@gmail.com>
+# adapted from https://gitlab.alpinelinux.org/alpine/aports/-/blob/7e64d49df29ba32320e428a4d7df4ceb6061458c/main/busybox/default.script
+
+UDHCPC="/etc/udhcpc"
+UDHCPC_CONF="$UDHCPC/udhcpc.conf"
+
+# 16 is the "dhcp" value in /etc/iproute2/rt_protos; tags routes and addresses
+# so they can be distinguished from statically configured ones.
+IP_PROTO="16"
+# Tag addresses with proto so ifstate can be configured to ignore them.
+# Requires parameters.ignore.ipaddr: [{proto: 16}] in ifstate.yaml.
+IP_ADDRPROTO="proto $IP_PROTO"
+
+# shellcheck source=/dev/null
+[ -f "$UDHCPC_CONF" ] && . "$UDHCPC_CONF"
+
+# Optional DHCP-provided variables
+: "${broadcast:=}" "${dns:=}" "${domain:=}" "${search:=}"
+: "${router:=}" "${staticroutes:=}" "${metric:=}"
+: "${ipv6:=}" "${length:=}"
+# Optional config variables (may be set in udhcpc.conf)
+: "${NO_GATEWAY:=}" "${NO_DNS:=}" "${IF_PEER_DNS:=}" "${IF_METRIC:=}"
+
+export broadcast dns domain interface ip mask metric staticroutes router subnet
+export ipv6 length
+
+# udhcpc6 sets $ipv6; udhcpc sets $ip
+if [ -n "$ipv6" ]; then
+	AF=6
+else
+	AF=4
+fi
+
+run_scripts() {
+	local dir="$1"
+	local script
+
+	if [ -d "$dir" ]; then
+		for script in "$dir"/*; do
+			if [ -f "$script" ] && [ -x "$script" ]; then
+				"$script"
+			fi
+		done
+	fi
+}
+
+# shellcheck disable=SC2329
+deconfig() {
+	if [ "$AF" = 6 ]; then
+		# Only flush DHCP-assigned addresses, leaving SLAAC addresses intact
+		ip -6 addr flush dev "$interface" proto "$IP_PROTO"
+	else
+		ip -4 addr flush dev "$interface"
+	fi
+	resolvectl revert "$interface" 2>/dev/null || true
+}
+
+# shellcheck disable=SC2329
+is_wifi() {
+	test -e /sys/class/net/"$interface"/phy80211
+}
+
+# shellcheck disable=SC2329
+if_index() {
+	if [ -e "/sys/class/net/$interface/ifindex" ]; then
+		cat "/sys/class/net/$interface/ifindex"
+	else
+		ip link show dev "$interface" | head -n1 | cut -d: -f1
+	fi
+}
+
+# shellcheck disable=SC2329
+calc_metric() {
+	local base idx
+	if is_wifi; then
+		base=300
+	else
+		base=200
+	fi
+	idx=$(if_index)
+	echo $(( base + ${idx:-0} ))
+}
+
+# shellcheck disable=SC2329
+route_add() {
+	local to=$1 gw=$2 num=$3
+	# special case for /32 subnets:
+	# /32 instructs kernel to always use routing for all outgoing packets
+	# (they can never be sent to local subnet - there is no local subnet for /32).
+	# Used in datacenters, avoids the need for private ip-addresses between two hops.
+	if [ "$subnet" = "255.255.255.255" ] && [ "$to" = "0.0.0.0/0" ]; then
+		ip -4 route add "$gw" dev "$interface" proto "$IP_PROTO"
+	fi
+	ip -4 route add "$to" via "$gw" dev "$interface" \
+		metric $(( num + ${IF_METRIC:-$(calc_metric)} )) proto "$IP_PROTO"
+}
+
+# shellcheck disable=SC2329
+routes() {
+	[ -z "$router" ] && [ -z "$staticroutes" ] && return
+	local iface=
+	for iface in $NO_GATEWAY; do
+		[ "$iface" = "$interface" ] && return
+	done
+	while ip -4 route del default dev "$interface" 2>/dev/null; do
+		:
+	done
+	local num=0
+	# RFC3442:
+	# If the DHCP server returns both a Classless Static Routes option
+	# and a Router option, the DHCP client MUST ignore the Router option.
+	if [ -n "$staticroutes" ]; then
+		# static routes format: dest1/mask gw1 ... destn/mask gwn
+		# shellcheck disable=SC2086
+		set -- $staticroutes
+		while [ -n "${1:-}" ] && [ -n "${2:-}" ]; do
+			local dest="$1" gw="$2"
+			if [ "$gw" != "0.0.0.0" ]; then
+				route_add "$dest" "$gw" "$num" && num=$(( num + 1))
+			fi
+			shift 2
+		done
+	else
+		local gw=
+		for gw in $router; do
+			route_add 0.0.0.0/0 "$gw" "$num" && num=$(( num + 1 ))
+		done
+	fi
+}
+
+# shellcheck disable=SC2329
+set_dns() {
+	local i
+	[ -n "$IF_PEER_DNS" ] && [ "$IF_PEER_DNS" != "yes" ] && return
+	[ -z "$dns" ] && return
+	for i in $NO_DNS; do
+		[ "$i" = "$interface" ] && return
+	done
+	# shellcheck disable=SC2086
+	resolvectl dns -- "$interface" $dns
+	if [ -n "$search" ]; then
+		# shellcheck disable=SC2086
+		resolvectl domain -- "$interface" $search
+	elif [ -n "$domain" ]; then
+		# shellcheck disable=SC2086
+		resolvectl domain -- "$interface" $domain
+	fi
+}
+
+# shellcheck disable=SC2329
+bound() {
+	if [ "$AF" = 6 ]; then
+		# shellcheck disable=SC2086
+		ip -6 addr add "$ipv6/${length:-128}" dev "$interface" $IP_ADDRPROTO
+	else
+		# shellcheck disable=SC2086
+		ip -4 addr add "$ip"/"$mask" ${broadcast:+broadcast $broadcast} dev "$interface" $IP_ADDRPROTO
+		ip -4 link set dev "$interface" up
+		routes
+	fi
+	set_dns
+}
+
+# shellcheck disable=SC2329
+renew() {
+	if [ "$AF" = 6 ]; then
+		if ! ip -6 addr show dev "$interface" | grep -qF "$ipv6/${length:-128}"; then
+			ip -6 addr flush dev "$interface" proto "$IP_PROTO"
+			# shellcheck disable=SC2086
+			ip -6 addr add "$ipv6/${length:-128}" dev "$interface" $IP_ADDRPROTO
+		fi
+	else
+		if ! ip -4 addr show dev "$interface" | grep -qF "$ip/$mask"; then
+			ip -4 addr flush dev "$interface"
+			# shellcheck disable=SC2086
+			ip -4 addr add "$ip"/"$mask" ${broadcast:+broadcast $broadcast} dev "$interface" $IP_ADDRPROTO
+		fi
+		routes
+	fi
+	set_dns
+}
+
+case "$1" in
+	deconfig|renew|bound)
+		run_scripts "$UDHCPC/pre-$1"
+		$1
+		run_scripts "$UDHCPC/post-$1"
+		;;
+	leasefail)
+		echo "udhcpc failed to get a DHCP lease" >&2
+		;;
+	nak)
+		echo "udhcpc received DHCP NAK" >&2
+		;;
+	*)
+		echo "Error: this script should be called from udhcpc or udhcpc6" >&2
+		exit 1
+		;;
+esac
+
+exit 0
