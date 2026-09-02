@@ -18,7 +18,7 @@
 let
   console = stdenv.mkDerivation (finalAttrs: {
     pname = "rustfs-console";
-    version = "0.1.22";
+    version = "0.1.25";
     __structuredAttrs = true;
     __darwinAllowLocalNetworking = true;
 
@@ -26,7 +26,7 @@ let
       owner = "rustfs";
       repo = "console";
       tag = "v${finalAttrs.version}";
-      hash = "sha256-qdF+dUjvbIoVJxXES9K4K4Z0H0kKMgRzQ8tHnGQxybw=";
+      hash = "sha256-wPxexsOaZD+pmf1XldN8baa1f6tE0xj/B706m5uwlwc=";
     };
 
     pnpmDeps = fetchPnpmDeps {
@@ -54,22 +54,28 @@ let
 in
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "rustfs";
-  version = "1.0.0-rc.3";
+  version = "1.0.0-rc.5";
   __structuredAttrs = true;
 
   src = fetchFromGitHub {
     owner = "rustfs";
     repo = "rustfs";
     tag = finalAttrs.version;
-    hash = "sha256-vh4jw7sPndqMXeU/fWavM2zT5D0p4KZcfUxWnGSc2Yg=";
+    hash = "sha256-Xb9Lv+8BvHF089D5YwTp7DOMosXc8bUYYEV5F7V2gxU=";
   };
 
   postPatch = ''
     rm -rf ./rustfs/static
     cp -rL ${finalAttrs.console} ./rustfs/static
+    # The Connect inventory store refuses directories with a setgid/group-write
+    # bit (unix_directory_is_trusted, inventory.rs) when opening its in-tree
+    # test fixtures. The build-user sandbox marks these dirs that way, so make
+    # the /build source path owner-only to let the tests run.
+    #chmod 700 /build/source /build/source/rustfs
+    #chmod 700 /build 2>/dev/null || true
   '';
 
-  cargoHash = "sha256-u+wyvJEv0rzGt02bvexHXEUl1fkZlMwCoeSWI3Gd1fk=";
+  cargoHash = "sha256-+PnEy6Z/ynNjgsgQz98Q/kGuyQ2+FgnJbh6Mk1/tohg=";
 
   nativeBuildInputs = [
     protobuf
@@ -88,6 +94,14 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   # Only build the main rustfs binary
   cargoBuildFlags = "-p rustfs";
+
+  # Upstream's release profile uses thin LTO with a single codegen unit, which
+  # makes rustc get OOM-killed while compiling the test targets.
+  preCheck = ''
+    export CARGO_PROFILE_RELEASE_LTO=false
+    export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+  '';
+
   cargoTestFlags = "-p rustfs";
 
   # tests share global state and fail depending on execution order,
